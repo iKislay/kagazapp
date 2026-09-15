@@ -1,0 +1,42 @@
+{
+  "name": "@kagaz/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kagaz shop app — the app being open is the shop being open.",
+  "author": "Kagaz",
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "build": "pnpm build:main && pnpm build:renderer",
+    "build:main": "tsc -p tsconfig.electron.json",
+    "build:renderer": "vite build",
+    "dev": "concurrently -k -n vite,electron -c cyan,magenta \"pnpm dev:renderer\" \"pnpm dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.electron.json && cross-env KAGAZ_DEV_SERVER=http://localhost:5173 electron .",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "package": "pnpm build && electron-builder --win --x64",
+    "package:dir": "pnpm build && electron-builder --win --x64 --dir",
+    "clean": "rimraf dist release *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@kagaz/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@kagaz/config": "workspace:*",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}

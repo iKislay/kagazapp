@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Phase 0/1 checks need a parseable DATABASE_URL, not a reachable one.
+  DATABASE_URL: postgresql://kagaz:kagaz@localhost:5432/kagaz_test?schema=public
+
+jobs:
+  check:
+    name: typecheck, lint, test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: kagaz
+          POSTGRES_PASSWORD: kagaz
+          POSTGRES_DB: kagaz_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @kagaz/backend db:generate
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Migrate test database
+        run: pnpm --filter @kagaz/backend db:deploy
+
+      - name: Test
+        run: pnpm -r test
+
+  docker:
+    name: backend image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        # Verifies LibreOffice, poppler and the font set are installable and
+        # that `soffice --version` succeeds inside the image.
+        run: |
+          docker build \
+            -f apps/backend/Dockerfile \
+            --build-arg GIT_COMMIT=${{ github.sha }} \
+            -t kagaz-backend:ci .

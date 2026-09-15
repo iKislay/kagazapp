@@ -1,0 +1,14 @@
+{
+  "extends": "@kagaz/config/tsconfig/node.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "verbatimModuleSyntax": false,
+    "rootDir": ".",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo-electron",
+    "types": ["node", "electron"]
+  },
+  "include": ["electron/**/*.ts"],
+  "exclude": ["node_modules", "dist", "release", "renderer"]
+}

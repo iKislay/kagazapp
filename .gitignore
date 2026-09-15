@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+out/
+release/
+*.tsbuildinfo
+
+# env — never commit real secrets
+.env
+.env.*
+!.env.example
+
+# prisma
+apps/backend/prisma/*.db
+apps/backend/prisma/*.db-journal
+
+# local data
+*.sqlite
+*.sqlite3
+data/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# test / coverage
+coverage/
+.vitest/
+
+# Claude
+Claude outputs/

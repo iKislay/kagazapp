@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/out
+**/release
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+docs
+IMPLEMENTATION_PLAN.md
+Claude outputs
+**/*.log
+**/.tsbuildinfo

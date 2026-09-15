@@ -1,0 +1,31 @@
+{
+  "name": "kagaz",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r test",
+    "dev:backend": "pnpm --filter @kagaz/backend dev",
+    "dev:desktop": "pnpm --filter @kagaz/desktop dev",
+    "db:reset": "pnpm --filter @kagaz/backend db:reset",
+    "db:migrate": "pnpm --filter @kagaz/backend db:migrate",
+    "db:seed": "pnpm --filter @kagaz/backend db:seed",
+    "db:studio": "pnpm --filter @kagaz/backend db:studio"
+  },
+  "devDependencies": {
+    "@kagaz/config": "workspace:*",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  }
+}

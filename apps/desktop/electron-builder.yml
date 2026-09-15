@@ -1,0 +1,44 @@
+appId: app.kagaz.desktop
+productName: Kagaz
+copyright: Copyright © 2026 Kagaz
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+
+# SumatraPDF is invoked by the print executor (Phase 6) and must sit outside
+# the asar archive so it can be spawned as a real executable.
+extraResources:
+  - from: resources
+    to: .
+    filter:
+      - '**/*'
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Kagaz-Setup-${version}.${ext}
+  # Signing is Phase 19. Unsigned builds trip SmartScreen — expected for now.
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Kagaz
+  deleteAppDataOnUninstall: false
+
+publish:
+  - provider: github
+    owner: iKislay
+    repo: kagazapp

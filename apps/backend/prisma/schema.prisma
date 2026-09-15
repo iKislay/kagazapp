@@ -1,0 +1,572 @@
+// ============================================================
+// Kagaz — data model.
+//
+// This is a direct translation of §16 of IMPLEMENTATION_PLAN.md. The rules
+// that translation follows, and that every future change must keep:
+//
+//   * All money is integer paise. Never Float, never Decimal-as-rupees.
+//   * All timestamps are timestamptz.
+//   * All ids are UUIDv7 (time-ordered), generated in the application —
+//     Postgres 15 has no native uuidv7(). See src/lib/id.ts.
+//   * Enum and table names in the database are identical to the SQL in §16.
+//     Prisma-side names are camelCase; @map / @@map carries the difference.
+//   * Every foreign key has an index. This is asserted by a test, not trusted.
+//
+// Things Prisma cannot express live in hand-written SQL migrations:
+//   * the deferred ledger balance trigger
+//   * the shop_wallet_balances view
+//   * partial indexes (the WHERE clauses in §16)
+// See prisma/migrations/*_ledger_trigger_and_views/migration.sql.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ============================================================
+// SHOPS AND DEVICES
+// ============================================================
+
+enum ShopStatus {
+  onboarding
+  active
+  suspended
+  closed
+
+  @@map("shop_status")
+}
+
+model Shop {
+  id        String     @id @db.Uuid
+  /// Short code used in the wa.me deep link, e.g. 'PESCE1'.
+  code      String     @unique
+  name      String
+  address   String?
+  ownerName String     @map("owner_name")
+  ownerPhone String    @map("owner_phone")
+  gstin     String?
+  status    ShopStatus @default(onboarding)
+
+  // ---- Razorpay Route ----
+  /// acc_XXXXXXXX
+  rzLinkedAccountId String? @map("rz_linked_account_id")
+  /// created | activated | needs_clarification
+  rzAccountStatus   String? @map("rz_account_status")
+
+  // ---- business rules (FR-16, FR-17, O5, O6) ----
+  maxPagesPerOrder       Int     @default(100) @map("max_pages_per_order")
+  /// ₹500
+  maxOrderPaise          Int     @default(50000) @map("max_order_paise")
+  approvalThresholdPages Int     @default(50) @map("approval_threshold_pages")
+  maxQueueDepth          Int     @default(10) @map("max_queue_depth")
+  /// Hold the job until the student taps "print now".
+  secureRelease          Boolean @default(false) @map("secure_release")
+
+  /// 500 bps = 5%
+  commissionBps      Int @default(500) @map("commission_bps")
+  commissionMinPaise Int @default(100) @map("commission_min_paise")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rateCards           RateCard[]
+  devices             Device[]
+  pairingCodes        PairingCode[]
+  botSessions         BotSession[]
+  orders              Order[]
+  transfers           RzTransfer[]
+  ledgerTransactions  LedgerTransaction[]
+  withdrawals         Withdrawal[]
+
+  @@map("shops")
+}
+
+/// Versioned: a quoted order must be immune to a later price change (FR-14).
+model RateCard {
+  id      String @id @db.Uuid
+  shopId  String @map("shop_id") @db.Uuid
+  version Int
+  /// See §20 for the shape.
+  card    Json   @db.JsonB
+
+  effectiveFrom DateTime @default(now()) @map("effective_from") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shop   Shop    @relation(fields: [shopId], references: [id])
+  orders Order[]
+
+  @@unique([shopId, version])
+  @@index([shopId, effectiveFrom(sort: Desc)])
+  @@map("rate_cards")
+}
+
+model Device {
+  id        String  @id @db.Uuid
+  shopId    String  @map("shop_id") @db.Uuid
+  /// "Front counter PC"
+  name      String?
+  osVersion String? @map("os_version")
+  appVersion String? @map("app_version")
+  /// sha256 of the device JWT's jti; supports revocation.
+  tokenHash String  @map("token_hash")
+
+  pairedAt        DateTime? @map("paired_at") @db.Timestamptz(6)
+  lastSeenAt      DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  lastHeartbeatAt DateTime? @map("last_heartbeat_at") @db.Timestamptz(6)
+  isRevoked       Boolean   @default(false) @map("is_revoked")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shop     Shop      @relation(fields: [shopId], references: [id])
+  printers Printer[]
+
+  @@index([shopId])
+  @@map("devices")
+}
+
+model PairingCode {
+  /// Crockford base32, no ambiguous characters.
+  code       String    @id @db.Char(8)
+  shopId     String    @map("shop_id") @db.Uuid
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  shop Shop @relation(fields: [shopId], references: [id])
+
+  @@index([shopId])
+  @@map("pairing_codes")
+}
+
+model Printer {
+  id         String @id @db.Uuid
+  deviceId   String @map("device_id") @db.Uuid
+  /// Exact Windows printer name; used verbatim by SumatraPDF.
+  systemName String @map("system_name")
+  displayName String? @map("display_name")
+
+  supportsColor  Boolean  @default(false) @map("supports_color")
+  supportsDuplex Boolean  @default(false) @map("supports_duplex")
+  paperSizes     String[] @default(["A4"]) @map("paper_sizes")
+  isNetwork      Boolean  @default(false) @map("is_network")
+  snmpHost       String?  @map("snmp_host") @db.Inet
+
+  /// Lower wins when both printers can take the job.
+  priority        Int     @default(100)
+  isEnabled       Boolean @default(true) @map("is_enabled")
+  maintenanceNote String? @map("maintenance_note")
+
+  /// See §22.
+  lastStatus   Json?     @map("last_status") @db.JsonB
+  lastStatusAt DateTime? @map("last_status_at") @db.Timestamptz(6)
+
+  device Device  @relation(fields: [deviceId], references: [id])
+  orders Order[]
+
+  @@unique([deviceId, systemName])
+  @@map("printers")
+}
+
+// ============================================================
+// STUDENTS
+// ============================================================
+
+model Student {
+  id          String  @id @db.Uuid
+  /// +919xxxxxxxxx
+  phoneE164   String  @unique @map("phone_e164")
+  /// WhatsApp profile name, best effort.
+  displayName String? @map("display_name")
+  isBlocked   Boolean @default(false) @map("is_blocked")
+  blockReason String? @map("block_reason")
+
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  files  File[]
+  orders Order[]
+
+  @@map("students")
+}
+
+/// One row per active WhatsApp conversation — the bot's FSM state.
+model BotSession {
+  phoneE164 String  @id @map("phone_e164")
+  shopId    String? @map("shop_id") @db.Uuid
+  /// See §25.
+  state     String
+  context   Json    @default("{}") @db.JsonB
+  /// Deliberately not a foreign key: the order may not exist yet.
+  orderId   String? @map("order_id") @db.Uuid
+
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  shop Shop? @relation(fields: [shopId], references: [id])
+
+  @@index([shopId])
+  @@map("bot_sessions")
+}
+
+// ============================================================
+// FILES
+// ============================================================
+
+enum FileStatus {
+  uploading
+  uploaded
+  converting
+  converted
+  failed
+  deleted
+
+  @@map("file_status")
+}
+
+model File {
+  id        String     @id @db.Uuid
+  studentId String     @map("student_id") @db.Uuid
+  status    FileStatus @default(uploading)
+
+  originalName  String? @map("original_name")
+  originalMime  String? @map("original_mime")
+  originalBytes BigInt? @map("original_bytes")
+  /// R2 object key.
+  originalKey   String? @map("original_key")
+
+  /// R2 object key of the converted PDF.
+  pdfKey       String? @map("pdf_key")
+  pdfBytes     BigInt? @map("pdf_bytes")
+  pdfSha256    String? @map("pdf_sha256")
+  pageCount    Int?    @map("page_count")
+  thumbnailKey String? @map("thumbnail_key")
+
+  conversionError String?   @map("conversion_error")
+  /// FR-39 — the retention deadline.
+  deleteAfter     DateTime? @map("delete_after") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student Student @relation(fields: [studentId], references: [id])
+  orders  Order[]
+
+  @@index([studentId])
+  @@map("files")
+}
+
+// ============================================================
+// ORDERS
+// ============================================================
+
+enum OrderStatus {
+  DRAFT
+  AWAITING_FILE
+  CONVERTING
+  CONVERSION_FAILED
+  QUOTED
+  PREFLIGHT_FAILED
+  AWAITING_PAYMENT
+  PAYMENT_FAILED
+  EXPIRED
+  PAID
+  AWAITING_APPROVAL
+  REJECTED
+  HELD
+  QUEUED
+  DISPATCHED
+  PRINTING
+  PRINTED
+  COMPLETED
+  PRINT_FAILED
+  REFUND_PENDING
+  REFUNDED
+  CANCELLED
+
+  @@map("order_status")
+}
+
+model Order {
+  id        String      @id @db.Uuid
+  /// Human token, e.g. 'K7F2'.
+  shortCode String      @unique @map("short_code")
+  /// Per-shop per-day counter shown on the cover sheet.
+  tokenNumber Int?      @map("token_number")
+  shopId    String      @map("shop_id") @db.Uuid
+  studentId String      @map("student_id") @db.Uuid
+  fileId    String?     @map("file_id") @db.Uuid
+  status    OrderStatus @default(DRAFT)
+
+  // ---- print options (FR-12) ----
+  /// 'bw' | 'color'
+  colorMode     String? @map("color_mode")
+  /// 'single' | 'double'
+  sides         String?
+  copies        Int     @default(1)
+  /// null = all pages
+  pageRange     String? @map("page_range")
+  /// Resolved count after applying pageRange.
+  pagesToPrint  Int?    @map("pages_to_print")
+  /// Physical sheets, accounting for duplex and copies.
+  sheetsToPrint Int?    @map("sheets_to_print")
+  paperSize     String  @default("A4") @map("paper_size")
+
+  // ---- pricing (frozen at quote time, FR-14) ----
+  rateCardId      String?   @map("rate_card_id") @db.Uuid
+  priceBreakdown  Json?     @map("price_breakdown") @db.JsonB
+  totalPaise      Int?      @map("total_paise")
+  commissionPaise Int?      @map("commission_paise")
+  shopSharePaise  Int?      @map("shop_share_paise")
+  quoteExpiresAt  DateTime? @map("quote_expires_at") @db.Timestamptz(6)
+
+  // ---- fulfilment ----
+  assignedPrinterId String?   @map("assigned_printer_id") @db.Uuid
+  preflightResult   Json?     @map("preflight_result") @db.JsonB
+  dispatchedAt      DateTime? @map("dispatched_at") @db.Timestamptz(6)
+  printedAt         DateTime? @map("printed_at") @db.Timestamptz(6)
+  completedAt       DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  // ---- failure ----
+  /// See §27.
+  failureCode   String? @map("failure_code")
+  failureDetail String? @map("failure_detail")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  shop            Shop      @relation(fields: [shopId], references: [id])
+  student         Student   @relation(fields: [studentId], references: [id])
+  file            File?     @relation(fields: [fileId], references: [id])
+  rateCard        RateCard? @relation(fields: [rateCardId], references: [id])
+  assignedPrinter Printer?  @relation(fields: [assignedPrinterId], references: [id])
+
+  events             OrderEvent[]
+  payments           Payment[]
+  refunds            Refund[]
+  transfers          RzTransfer[]
+  ledgerTransactions LedgerTransaction[]
+
+  @@index([shopId, createdAt(sort: Desc)])
+  @@index([studentId, createdAt(sort: Desc)])
+  @@index([fileId])
+  @@index([rateCardId])
+  @@index([assignedPrinterId])
+  @@map("orders")
+}
+
+/// Append-only. Every transition is recorded. This is the debugging lifeline.
+model OrderEvent {
+  id         BigInt       @id @default(autoincrement())
+  orderId    String       @map("order_id") @db.Uuid
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  /// 'system' | 'student' | 'device:<id>' | 'admin:<id>' | 'webhook'
+  actor      String
+  reason     String?
+  metadata   Json?        @db.JsonB
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId, id])
+  @@map("order_events")
+}
+
+// ============================================================
+// PAYMENTS
+// ============================================================
+
+model Payment {
+  id      String @id @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+
+  rzPaymentLinkId String? @map("rz_payment_link_id")
+  rzOrderId       String? @map("rz_order_id")
+  rzPaymentId     String? @unique @map("rz_payment_id")
+
+  amountPaise Int @map("amount_paise")
+  /// created | captured | failed | refunded | partially_refunded
+  status      String
+  /// upi | card | netbanking
+  method      String?
+
+  capturedAt DateTime? @map("captured_at") @db.Timestamptz(6)
+  raw        Json?     @db.JsonB
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order   Order    @relation(fields: [orderId], references: [id])
+  refunds Refund[]
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+model Refund {
+  id         String @id @db.Uuid
+  orderId    String @map("order_id") @db.Uuid
+  paymentId  String @map("payment_id") @db.Uuid
+
+  rzRefundId  String? @unique @map("rz_refund_id")
+  amountPaise Int     @map("amount_paise")
+  /// See §27.
+  reasonCode  String  @map("reason_code")
+  isAutomatic Boolean @default(true) @map("is_automatic")
+  /// pending | processed | failed
+  status      String
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  order   Order   @relation(fields: [orderId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+
+  @@index([orderId])
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+model RzTransfer {
+  id      String @id @db.Uuid
+  orderId String @map("order_id") @db.Uuid
+  shopId  String @map("shop_id") @db.Uuid
+
+  rzTransferId String? @unique @map("rz_transfer_id")
+  amountPaise  Int     @map("amount_paise")
+  onHold       Boolean @default(true) @map("on_hold")
+
+  releasedAt DateTime? @map("released_at") @db.Timestamptz(6)
+  settledAt  DateTime? @map("settled_at") @db.Timestamptz(6)
+  status     String
+  raw        Json?     @db.JsonB
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order Order @relation(fields: [orderId], references: [id])
+  shop  Shop  @relation(fields: [shopId], references: [id])
+
+  @@index([orderId])
+  @@index([shopId])
+  @@map("rz_transfers")
+}
+
+/// Every inbound webhook, stored before processing.
+/// Idempotency + replay + audit (FR-22).
+model WebhookEvent {
+  id String @id @db.Uuid
+  /// 'razorpay' | 'whatsapp'
+  provider   String
+  externalId String @map("external_id")
+  eventType  String @map("event_type")
+
+  payload     Json    @db.JsonB
+  signatureOk Boolean @map("signature_ok")
+
+  processedAt  DateTime? @map("processed_at") @db.Timestamptz(6)
+  processError String?   @map("process_error")
+  receivedAt   DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+
+  @@unique([provider, externalId])
+  @@map("webhook_events")
+}
+
+// ============================================================
+// LEDGER (see §18)
+// ============================================================
+
+enum AccountKind {
+  /// External: money arriving from a student.
+  student_inflow
+  /// Per-shop liability.
+  shop_wallet
+  /// Commission earned.
+  kagaz_revenue
+  /// Expense.
+  gateway_fees
+  /// External: money going back to a student.
+  refund_outflow
+
+  @@map("account_kind")
+}
+
+model LedgerTransaction {
+  id          String  @id @db.Uuid
+  /// 'order_payment' | 'refund' | 'payout_release' | 'adjustment'
+  kind        String
+  orderId     String? @map("order_id") @db.Uuid
+  shopId      String? @map("shop_id") @db.Uuid
+  description String
+  createdBy   String  @map("created_by")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  order   Order?        @relation(fields: [orderId], references: [id])
+  shop    Shop?         @relation(fields: [shopId], references: [id])
+  entries LedgerEntry[]
+
+  @@index([orderId])
+  @@index([shopId])
+  @@map("ledger_transactions")
+}
+
+model LedgerEntry {
+  id            BigInt      @id @default(autoincrement())
+  transactionId String      @map("transaction_id") @db.Uuid
+  accountKind   AccountKind @map("account_kind")
+  /// shop_id for shop_wallet, null for global accounts. Deliberately not a FK.
+  accountRef    String?     @map("account_ref") @db.Uuid
+
+  /// Signed amount. Positive = credit to this account, negative = debit.
+  /// The sum of all entries in a transaction MUST be exactly zero — enforced
+  /// by the deferred constraint trigger, not by application code.
+  amountPaise BigInt @map("amount_paise")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  transaction LedgerTransaction @relation(fields: [transactionId], references: [id])
+
+  @@index([accountKind, accountRef])
+  @@index([transactionId])
+  @@map("ledger_entries")
+}
+
+model Withdrawal {
+  id          String @id @db.Uuid
+  shopId      String @map("shop_id") @db.Uuid
+  amountPaise BigInt @map("amount_paise")
+  /// requested | releasing | released | failed
+  status      String
+
+  requestedAt DateTime  @default(now()) @map("requested_at") @db.Timestamptz(6)
+  releasedAt  DateTime? @map("released_at") @db.Timestamptz(6)
+  error       String?
+
+  shop Shop @relation(fields: [shopId], references: [id])
+
+  @@index([shopId])
+  @@map("withdrawals")
+}
+
+// ============================================================
+// BACKGROUND JOBS
+// ============================================================
+
+model JobQueue {
+  id      BigInt @id @default(autoincrement())
+  /// 'convert_file' | 'delete_expired_files' | 'reconcile_ledger' | ...
+  kind    String
+  payload Json   @db.JsonB
+
+  runAfter    DateTime @default(now()) @map("run_after") @db.Timestamptz(6)
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(5) @map("max_attempts")
+
+  lockedAt    DateTime? @map("locked_at") @db.Timestamptz(6)
+  lockedBy    String?   @map("locked_by")
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  lastError   String?   @map("last_error")
+
+  @@map("job_queue")
+}

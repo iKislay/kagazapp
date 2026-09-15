@@ -1,0 +1,29 @@
+{
+  "name": "@kagaz/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint.js",
+    "./prettier": "./prettier.js",
+    "./tsconfig/base.json": "./tsconfig/base.json",
+    "./tsconfig/node.json": "./tsconfig/node.json",
+    "./tsconfig/react.json": "./tsconfig/react.json"
+  },
+  "files": [
+    "eslint.js",
+    "prettier.js",
+    "tsconfig"
+  ],
+  "scripts": {
+    "build": "echo \"@kagaz/config: nothing to build\"",
+    "typecheck": "echo \"@kagaz/config: nothing to typecheck\"",
+    "test": "echo \"@kagaz/config: no tests\""
+  },
+  "dependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "typescript-eslint": "^8.18.2"
+  }
+}

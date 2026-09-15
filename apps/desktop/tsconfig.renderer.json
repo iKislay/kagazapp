@@ -1,0 +1,9 @@
+{
+  "extends": "@kagaz/config/tsconfig/react.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["vite/client"]
+  },
+  "include": ["renderer/**/*.ts", "renderer/**/*.tsx", "vite.config.ts"],
+  "exclude": ["node_modules", "dist", "release"]
+}
