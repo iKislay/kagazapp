@@ -20,11 +20,17 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@kagaz/config": "workspace:*",
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^2.1.8",
+    "fast-check": "^3.23.2",
     "rimraf": "^6.0.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

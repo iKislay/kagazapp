@@ -1,4 +1,4 @@
-import { SHARED_PACKAGE_NAME, formatPaise } from '@kagaz/shared';
+import { SHARED_PACKAGE_NAME, asPaise, formatPaise } from '@kagaz/shared';
 
 /**
  * Phase 0 placeholder. It renders a value computed by @kagaz/shared, which is
@@ -14,7 +14,7 @@ export function App(): JSX.Element {
         <dt>Shared package</dt>
         <dd>{SHARED_PACKAGE_NAME}</dd>
         <dt>Money formatting</dt>
-        <dd>{formatPaise(14250)}</dd>
+        <dd>{formatPaise(asPaise(14250))}</dd>
         <dt>Phase</dt>
         <dd>0 — foundations</dd>
       </dl>

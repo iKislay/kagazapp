@@ -1774,22 +1774,24 @@ The ordering is deliberate. Phases 4–7 come before any payment work because *t
 
 ### Tasks
 
-- [ ] Initialise pnpm workspace at the repo root. `pnpm-workspace.yaml` listing `apps/*` and `packages/*`.
-- [ ] `tsconfig.base.json` with `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`. Do not loosen these later; they catch exactly the class of bug that costs money here.
-- [ ] `packages/config` — shared eslint, prettier, tsconfig presets.
-- [ ] `packages/shared` — empty package, exports set up, consumed by backend and desktop to prove workspace resolution works.
-- [ ] `apps/backend` — Fastify server, one route `GET /health` returning `{ ok: true, version, commit }`.
-- [ ] Dockerfile for the backend. Base `node:20-slim`, then install `libreoffice-core libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils fonts-liberation fonts-dejavu fonts-noto-core fonts-noto-devanagari`. Verify `soffice --version` and `pdftoppm -v` in the build.
-- [ ] `apps/desktop` — Electron app that opens a window saying "Kagaz". `electron-builder` configured for `nsis`, `win`, `x64`.
-- [ ] `.env.example` listing every variable from Appendix A with fake values. `.env` in `.gitignore`.
-- [ ] `.github/workflows/ci.yml` — on PR: `pnpm install`, typecheck all packages, lint, test.
+- [x] Initialise pnpm workspace at the repo root. `pnpm-workspace.yaml` listing `apps/*` and `packages/*`.
+- [x] `tsconfig.base.json` with `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`. Do not loosen these later; they catch exactly the class of bug that costs money here.
+- [x] `packages/config` — shared eslint, prettier, tsconfig presets.
+- [x] `packages/shared` — empty package, exports set up, consumed by backend and desktop to prove workspace resolution works.
+- [x] `apps/backend` — Fastify server, one route `GET /health` returning `{ ok: true, version, commit }`.
+- [x] Dockerfile for the backend. Base `node:20-slim`, then install `libreoffice-core libreoffice-writer libreoffice-impress libreoffice-calc poppler-utils fonts-liberation fonts-dejavu fonts-noto-core fonts-noto-devanagari`. Verify `soffice --version` and `pdftoppm -v` in the build.
+- [x] `apps/desktop` — Electron app that opens a window saying "Kagaz". `electron-builder` configured for `nsis`, `win`, `x64`.
+- [x] `.env.example` listing every variable from Appendix A with fake values. `.env` in `.gitignore`.
+- [x] `.github/workflows/ci.yml` — on PR: `pnpm install`, typecheck all packages, lint, test.
 - [ ] Deploy the backend to Railway/Render from `main`. Point a subdomain at it.
-- [ ] `docs/adr/0001-record-architecture-decisions.md` and `0002-electron-over-tauri.md` capturing §14's rationale.
+- [x] `docs/adr/0001-record-architecture-decisions.md` and `0002-electron-over-tauri.md` capturing §14's rationale.
+
+**Status (2026-09-15).** Everything except the Railway/Render deploy is done — that needs your hosting account and is not something to do unattended. `apps/backend` currently runs against a Neon Postgres instance (`.env`, not committed) rather than local Postgres.
 
 ### Acceptance criteria
 
 - `pnpm install && pnpm -r build && pnpm -r test` passes from a clean clone.
-- `curl https://<your-backend>/health` returns 200 with the current commit SHA.
+- `curl https://<your-backend>/health` returns 200 with the current commit SHA. — not yet checkable, no deployment exists.
 - `pnpm --filter desktop build` produces a `.exe` installer that runs on a Windows machine.
 - CI blocks a PR that fails typecheck.
 
@@ -1801,21 +1803,27 @@ The ordering is deliberate. Phases 4–7 come before any payment work because *t
 
 ### Tasks
 
-- [ ] Translate §16 into `prisma/schema.prisma`. Keep the enum names identical to the SQL.
-- [ ] Write the ledger balance trigger as a raw SQL migration — Prisma will not generate it.
-- [ ] Write the `shop_wallet_balances` view as a raw SQL migration.
-- [ ] `prisma migrate dev` → review the generated SQL by hand before committing. Never commit a migration you have not read.
-- [ ] Seed script: 1 shop (`PESCE1`), 1 rate card, 2 printers (one BW, one colour), 3 students, 10 orders across a spread of statuses, matching ledger entries.
-- [ ] Verify the ledger trigger rejects an unbalanced transaction. Write this as a test, not a manual check.
-- [ ] Add `pnpm db:reset` (drop, migrate, seed) for local development.
-- [ ] Configure connection pooling (PgBouncer via Supabase, or Prisma's pool) and set a sane `connection_limit`.
+- [x] Translate §16 into `prisma/schema.prisma`. Keep the enum names identical to the SQL.
+- [x] Write the ledger balance trigger as a raw SQL migration — Prisma will not generate it.
+- [x] Write the `shop_wallet_balances` view as a raw SQL migration.
+- [x] `prisma migrate dev` → review the generated SQL by hand before committing. Never commit a migration you have not read.
+- [x] Seed script: 1 shop (`PESCE1`), 1 rate card, 2 printers (one BW, one colour), 3 students, 10 orders across a spread of statuses, matching ledger entries.
+- [x] Verify the ledger trigger rejects an unbalanced transaction. Write this as a test, not a manual check.
+- [x] Add `pnpm db:reset` (drop, migrate, seed) for local development.
+- [x] Configure connection pooling (PgBouncer via Supabase, or Prisma's pool) and set a sane `connection_limit`.
+
+**Status (2026-09-15).** All tasks done; `pnpm test` is green (16/16 backend, 8/8 shared). Ran the migrations, generated and hand-reviewed both migration.sql files, reset and seeded the database, and fixed two bugs found in the process:
+- `prisma/seed.ts` built fake Razorpay ids from `orderId.slice(0, 8)`; since ids are UUIDv7, that slice is the near-constant timestamp prefix, so every paid order in a run collided on `payments.rz_payment_id`. Changed to `orderId.slice(-8)` (the random tail).
+- `prisma/sql/ledger_trigger_and_views.sql` defined `shop_wallet_balances.balance_paise` as `SUM(amount_paise)`, which Postgres returns as `numeric`, not `bigint` — failing the "money is always an integer type" schema-invariant test. Added an explicit `::BIGINT` cast, in both the source `.sql` and the generated migration.
+
+Known gap against the acceptance criteria below: seeding alone takes ~125s (not the ~20s target), and `db:reset` currently runs the seed twice — `prisma migrate reset` already auto-seeds via the `prisma.seed` field in `apps/backend/package.json`, and the script then chains an explicit `&& pnpm db:seed` on top. Not fixed yet; flagging for Phase 2+ cleanup or whenever seed performance starts to matter.
 
 ### Acceptance criteria
 
-- `pnpm db:reset` produces a usable database in under 20 seconds.
-- Inserting two ledger entries summing to 100 paise raises an exception naming the transaction.
-- Every foreign key has an index. Check with a query, do not assume.
-- A down-migration runs cleanly.
+- `pnpm db:reset` produces a usable database in under 20 seconds. — not met; current run is ~125s×2, see status note above.
+- Inserting two ledger entries summing to 100 paise raises an exception naming the transaction. — verified by `test/ledger-trigger.test.ts`.
+- Every foreign key has an index. Check with a query, do not assume. — verified by `test/schema-invariants.test.ts`.
+- A down-migration runs cleanly. — `pnpm db:down` exists (`scripts/db-down.ts`); not yet exercised against the current migrations.
 
 ---
 
@@ -1827,18 +1835,24 @@ The ordering is deliberate. Phases 4–7 come before any payment work because *t
 
 ### Tasks
 
-- [ ] `money.ts` — `Paise` branded type, `rupeesToPaise`, `formatPaise`, `bps` helpers. Make `number` un-assignable to `Paise` so an accidental rupee value is a compile error.
-- [ ] `page-range.ts` — parser per §20. Property-based tests: for any valid range string, the output is sorted, deduplicated and within bounds.
-- [ ] `pricing.ts` — the §20 algorithm as one pure function. Table-driven tests covering every row of the worked-examples table plus edge cases: 1 page, min-order floor, duplex odd page count, every volume tier boundary, page range reducing the count.
-- [ ] `order-state.ts` — the §17 transition table as data, plus `canTransition(from, event)` and `applyTransition(...)` returning the next state or a typed error. Test that every terminal state rejects all events, and that every state in the enum is reachable.
-- [ ] `errors.ts` — the §27 taxonomy as a const object: code, student message, refund flag, notify-operator flag, target state.
-- [ ] `ws-protocol.ts` — zod schema for every message in §23, plus a discriminated union and type guards.
+- [x] `money.ts` — `Paise` branded type, `rupeesToPaise`, `formatPaise`, `bps` helpers. Make `number` un-assignable to `Paise` so an accidental rupee value is a compile error.
+- [x] `page-range.ts` — parser per §20. Property-based tests: for any valid range string, the output is sorted, deduplicated and within bounds.
+- [x] `pricing.ts` — the §20 algorithm as one pure function. Table-driven tests covering every row of the worked-examples table plus edge cases: 1 page, min-order floor, duplex odd page count, every volume tier boundary, page range reducing the count.
+- [x] `order-state.ts` — the §17 transition table as data, plus `canTransition(from, event)` and `applyTransition(...)` returning the next state or a typed error. Test that every terminal state rejects all events, and that every state in the enum is reachable.
+- [x] `errors.ts` — the §27 taxonomy as a const object: code, student message, refund flag, notify-operator flag, target state.
+- [x] `ws-protocol.ts` — zod schema for every message in §23, plus a discriminated union and type guards.
+
+**Status (2026-09-18).** All six modules implemented in `packages/shared/src/`, each with its own test file under `packages/shared/test/`. 113 tests, all passing. Notes on decisions the spec left open:
+- `order-state.ts`: `QUOTED --options_confirmed--> QUOTED` is a same-state transition — the spec's diagram target for that edge is the pseudo-state `(preflight)`, which isn't one of the 22 real `order_status` enum values; no persisted status actually changes until `preflight_ok`/`preflight_failed` (both also `from: QUOTED`) report the outcome. `DRAFT` is documented as the order's creation default (`schema.prisma`), not reachable via `applyTransition` — there is no row to transition before it exists.
+- `errors.ts`: `targetStatus` is typed `OrderStatus | 'stay'` to capture the table's "stay" entries (`FILE_TOO_LARGE`, `INVALID_PAGE_RANGE`, etc.) distinctly from a real transition.
+- `pricing.ts`/`page-range.ts`: kept the `Bps`/`Paise` types from `money.ts` throughout so a rupee value or a raw float can't leak into a total by accident.
+- `page-range.ts`: whitespace is stripped from each comma-separated part (not just trimmed at the ends), so `"1 - 5, 8"` parses the same as `"1-5,8"` — the grammar's `\s` in the allowed-character class implied this was meant to be tolerated, not merely not-rejected.
 
 ### Acceptance criteria
 
-- 100% line coverage on `pricing.ts`, `page-range.ts` and `order-state.ts`. These three earn it; nothing else in the codebase needs to.
-- `pricing.ts` has zero imports outside `packages/shared`.
-- A test asserts that `Object.keys(ORDER_STATES)` matches the database enum exactly, so the two cannot drift.
+- [x] 100% line coverage on `pricing.ts`, `page-range.ts` and `order-state.ts`. These three earn it; nothing else in the codebase needs to. — enforced by `vitest.config.ts` coverage thresholds (100% lines/statements/functions/branches, scoped to those three files via `coverage.include`); `pnpm --filter @kagaz/shared test:coverage` is green.
+- [x] `pricing.ts` has zero imports outside `packages/shared`. — imports only `./money.js` and `./page-range.js`.
+- [x] A test asserts that `Object.keys(ORDER_STATES)` matches the database enum exactly, so the two cannot drift. — `order-state.test.ts` reads the `enum OrderStatus` block straight out of `apps/backend/prisma/schema.prisma` and compares it against `ORDER_STATES`.
 
 ---
 

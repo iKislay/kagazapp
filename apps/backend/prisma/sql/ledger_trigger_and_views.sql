@@ -47,7 +47,7 @@ CREATE CONSTRAINT TRIGGER ledger_balance_check
 -- one cannot.
 -- ------------------------------------------------------------
 CREATE OR REPLACE VIEW shop_wallet_balances AS
-SELECT account_ref AS shop_id, SUM(amount_paise) AS balance_paise
+SELECT account_ref AS shop_id, SUM(amount_paise)::BIGINT AS balance_paise
 FROM ledger_entries
 WHERE account_kind = 'shop_wallet'
 GROUP BY account_ref;
